@@ -30,11 +30,11 @@ int main(){
 
     // Build server address structure to utilize
     servaddr.sin_family = AF_INET; // IPv4
-    serveraddr.sin_port = htons(PORT); // Setting port number, htons() protects network byte order
+    servaddr.sin_port = htons(PORT); // Setting port number, htons() protects network byte order
 
     // Place IP address back as binary form (Converted) -> Network operations needs binary form
     // 127.0.0.1 is a loopback address
-    if(inet_pton(AF_INET, "127.0.0.1", &servaddr, sizeof(servaddr)) < 0){
+    if(inet_pton(AF_INET, "127.0.0.1", &servaddr.sin_addr) <= 0){
         cout << "Problem with connecting! Line 38" << endl;
         return 1;
     }

@@ -2,8 +2,9 @@
 #include <cstring> // String functions ... memset
 #include <arpa/inet.h> // Networking Functions (TCP) - IF_INET .. SOCK_STREAM .. INADDR_ANY, mand more
 #include <unistd.h> // For close() .. close socket
+#include <fstream> // File input/output -> .conf files
 
-#define PORT 8080 //  Server --> Port
+//#define PORT 8080 //  Server --> Port
 
 //          Beej's Code Notes
 // socket(): Creates a socket for communication.
@@ -17,16 +18,29 @@
 using namespace std;
 
 int main(){
-    
-
     int server_fd, newsocket;
 
     struct sockaddr_in addr; // Server address info structure
     int addrlen = sizeof(addr);
     char buffer[1024] = {0}; // Buffer for storing client.cpp data
+    int port = 8080; // a default port
+
+    // Read from server.conf file
+    ifstream conf("server.conf");
+    if(conf.is_open()){
+        string line;
+        while(getline(conf, line)){
+            if(line.find("TCP_PORT") != -1){
+                port = stoi(line.substr(line.find("=") + 1));
+            }
+        }
+        conf.close();
+    }else{
+        cout << "Issues opening server.conf, Line 39" << endl;
+    }
 
     // Creating socket with TCP-and-IP & checking for error
-    if((server_fd = socket(AF_INET,SOCKSTREAM,0)) == 0) {
+    if((server_fd = socket(AF_INET,SOCK_STREAM,0)) == 0) {
         perror("Issue creating socket! Line 16");
         exit(EXIT_FAILURE);
     }
@@ -34,16 +48,22 @@ int main(){
     // Filling server address structure -> Setup
     addr.sin_family = AF_INET; // IPv4 Addr
     addr.sin_addr.s_addr = INADDR_ANY; // Accepting connections from ANY IP addr
-    address.sin_port = htons(PORT); // Set port # -> htons basically protects network byte order.
+    addr.sin_port = htons(port); // Set port # -> htons basically protects network byte order.
 
     // Bind socket to IP and Port from .conf file & checking for error
-    if(bind(server_fd, (struct sockaddress*)&addr, sizeof(address)) < 0){
+    if(bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0){
         perror("Binding socket issue! Line 36");
     }
 
     // Listen for connections -> Max = 3 (clients) , for now.
     if(listen(server_fd, 3) < 0){
         perror("Listen failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Accept connection here
+    if((newsocket = accept(server_fd, (struct sockaddr*)&addr, (socklen_t*)&addrlen)) < 0){
+        perror("Issue with accepting connection! Line 66");
         exit(EXIT_FAILURE);
     }
 

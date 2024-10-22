@@ -1,0 +1,74 @@
+Name: Justin Burns
+Course: CS447 Fall 2024
+
+Date:
+9/20/2024
+
+## Project Overview
+
+My project should provide a basic TCP client-to-server book management system.
+
+## File Table of Contents
+
+server.c -> Server-Side Code
+client.c -> Client-Side Code
+p1_helper.cpp*.h -> Helper functions provided by professor to load book database.
+books.db -> Provided book database
+Makefile -> To compile server & client
+
+        ** Procedure to run program: **
+
+# Server Terminal
+    // Run server with config file(IP AND PORT ATTACHED INSIDE)
+    ./server server.conf
+    // Nothing else needed. It should notify you when client connects.
+
+# Client Terminal
+    // Run client with client config file(IDENTICAL TO INFO IN SERVER CONFIG)
+    ./client client.conf
+    // HELO response should automatically be sent, you should see "Server: 200 HELO - OK"
+   
+    // -> CLIENT COMMAND PROMPT SHOULD BE DISPLAYED "Enter command:"
+
+    Enter command: HELP
+
+    // This should list commands available to you... It should behave as the PDF(Gamage provided) describes
+    
+    SEARCH, MANAGE, RECOMMEND, CHECKOUT, RETURN, BYE
+    
+    // Attempt to use each command
+
+    SEARCH -> should return code informing you its ready
+
+    FIND Dune/or/dune -> should return information and author for book
+
+    MANAGE -> should return listings of books
+
+    CHECKOUT Dune -> should allow you to checkout Dune, search for Dune after to make sure this is true. Or checkout on another client terminal.
+
+    BYE -> close client connection
+
+
+    /*
+
+Libraries Needed:
+    iostream -> For 'COUT'
+    sstream -> For stringstream
+    string -> for string
+    vector -> book vector
+    cstring -> for memset & string manip
+    cstdlib -> print
+    cstdio -> for exit()
+    unistd.h -> for fork, getaddrinfo and close
+    netdb.h -> for getaddrinfo
+    sys/types.h -> for socklen_t
+    sys/socket.h -> for socket operations
+    netinet/in.h -> for ip addr operations
+    arpa/inet.h -> for inet_ntop
+    signal.h -> for sigchld , handling signals
+    sys/wait.h -> for waitpid
+    sys/ipc.h -> for interprocess communication
+    sys/shm.h -> for shared mem
+    sys/sem.h -> for semaphore operations
+    p1_helper.h -> provided helper functions
+    */

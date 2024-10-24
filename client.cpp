@@ -31,6 +31,8 @@ void* get_in_addr(struct sockaddr* sa){
 using namespace std;
 
 int main(int argc, char* argv[]){
+
+    // Did user provide correct amount of arguments?
     if(argc != 2){
         cerr << "Usage: Client <config_file>" << endl;
         return 1;
@@ -38,13 +40,13 @@ int main(int argc, char* argv[]){
 
     string serverIP, serverPort;
     cout << "Opening .conf file for client" << endl;
-    ifstream conf(argv[1]); // Command line input for .conf file
-    if(!conf.is_open()){ // Check if conf file opened.
+    ifstream conf(argv[1]); // Should be the position of client.conf file name in command line
+    if(!conf.is_open()){ // Make sure file is opened
         cerr << "Issue opening client.conf! Line 43" << endl;
         return 1;
     }
 
-    // Read IP and Port from config file
+    // Reading IP and Port from config file
     string line;
     while (getline(conf, line)) {
         if (line.find("SERVER_IP=") == 0) {
@@ -65,7 +67,7 @@ int main(int argc, char* argv[]){
     // Setup hints(struct addrinfo -> provides hints to getaddrinfo() resolving addresses. Helps know if IPv4... TCP or UDP) for addr resolution
     struct addrinfo hints, *servinfo, *p;
     memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = AF_UNSPEC; 
     hints.ai_socktype = SOCK_STREAM; 
 
     // Retrieve addr info for server.
@@ -77,7 +79,7 @@ int main(int argc, char* argv[]){
     }
 
     int sockfd;
-    // Loop thru results then make connection
+    // Loop thru results then make connection. Creating socket and connecting to server
     for(p = servinfo; p != NULL; p = p->ai_next){
         if((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
             perror("Client issue: socket! Line 82");
@@ -119,6 +121,15 @@ int main(int argc, char* argv[]){
             break;
         }
 
+
+        //                      Notes
+        // ssize_t recv(int sockfd, void *buf, size_t len, int flags);
+        // sockfd (socket file descriptor.. identifies socket data should be received at)
+        // buf -> pointer to buffer for data to be stored
+        // len -> max num of bytes to be received. make the size of buffer so no extra data beyond buff's memory is printed
+        // flags -> flags for recv function, set to 0 by default
+
+        //Receive response from server ...
         int numbytes = recv(sockfd, buff, MAX_DATASIZE -1, 0);
         if(numbytes == -1){
             perror("recv issue! Line 123");
@@ -128,8 +139,8 @@ int main(int argc, char* argv[]){
             break;
         }
 
-        buff[numbytes] = '\0'; // '\0' represents end
-        cout << "Server: " << buff << endl;
+        buff[numbytes] = '\0'; // '\0' represents end of communication for now...
+        cout << "Server: " << buff << endl; // Relay to user what server received from recv line 133.
     }
 
     close(sockfd);

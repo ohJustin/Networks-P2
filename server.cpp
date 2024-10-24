@@ -19,12 +19,12 @@ void sigchild_handler(int x){
 }
 
 // Retrieve IPv4 or IPv6 addr from struct
-void* get_in_addr(struct sockaddr* sa){
-    if(sa->sa_family == AF_INET){
-        return &(((struct sockaddr_in*)sa)->sin_addr); // IPv4
-    }
-    return &(((struct sockaddr_in6*)sa)->sin6_addr); // IPv6
-}
+// void* get_in_addr(struct sockaddr* sa){
+//     if(sa->sa_family == AF_INET){
+//         return &(((struct sockaddr_in*)sa)->sin_addr); // IPv4
+//     }
+//     return &(((struct sockaddr_in6*)sa)->sin6_addr); // IPv6
+// }
 
 
 //          Beej's Code Notes
@@ -38,118 +38,147 @@ void* get_in_addr(struct sockaddr* sa){
 
 using namespace std;
 
-int main(int argc, char* argv[]){
-    int sock_fd, new_fd; // 1. Socket file descriptor, listener.. 2. Same, but for client
-    struct addrinfo hints, *servinfo, *p; // hints(IPv4 or...) - servinfo(list of results returned by getaddrinfo() - p(pointer to iterate servinfo) )
-    struct sockaddr_storage their_addr; // Address of client
-    socklen_t sin_size; // Hold size of their_addr. For knowing size of client addr when connection accepted.
-    struct sigaction sa; // SIGCHLD signal for zombie processes. specifies how to handle signals
-    char s[INET6_ADDRSTRLEN]; // readable ip address holder
-    int rv; // return value for functions.. not super important
-    int yes = 1; // For setting socket options,setsockopt() for example.
-    string port; // read from .conf file
-
-
-    // Read from server.conf file
-    ifstream conf("server.conf");
-    if(conf.is_open()){
-        string line;
-        while(getline(conf, line)){
-            if(line.substr(0,9) == "SERVER_PORT="){
-                port = line.substr(9);
-                break;
-            }
-        }
-        conf.close();
-    }else{
-        cerr << "Issues opening server.conf, Line 39" << endl;
-        return -1;
-    }
-
-    // Prep hints - Retrieve addr information
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC; // For IPv4 or IPv6
-    hints.ai_socktype = SOCK_STREAM; // socket type for TCP
-    hints.ai_flags = AI_PASSIVE; // Use own IP addr when binding.
-
-    // Check addrinfo for null return
-    if ((rv = getaddrinfo(NULL, port.c_str(), &hints, &servinfo)) != 0) {
-        std::cerr << "getaddrinfo: " << gai_strerror(rv) << std::endl;
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        cerr << "Usage: Server <config_file>" << endl;
         return 1;
     }
 
-    // Looping through results and binding to first bind-able result.
-    // socket(int domain/addrfamily, int sockettype, int protocol)
-    for (p = servinfo; p != NULL; p = p->ai_next) {
-        if ((sock_fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
-            perror("server: socket! Line 84");
-            continue;
-        }
-        // socket options allows server to reuse same port after restarting.
-        if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
-            throw system_error(errno, generic_category(), "setsockopt! Line 89");
-        }
-        //bind socket to curr addr(p->ai_addr) and the port.
-        if (bind(sock_fd, p->ai_addr, p->ai_addrlen) == -1) {
-            close(sock_fd);
-            perror("server: bind");
-            continue;
-        }
-
-        break; // Socket created errorless, options set, bounded to address.. Server is ready to listen for connections
-    }
-
-   freeaddrinfo(servinfo); // Done with structure, free it.
-
-    if(p == NULL){
-        cerr << "issue with binding server! Line 104";
+    string port;
+    cout << "Opening .conf file for server" << endl;
+    ifstream conf(argv[1]); // Command line input for .conf file
+    if (!conf.is_open()) { // Check if conf file opened.
+        cerr << "Issue opening server.conf! Line 12" << endl;
         return 1;
     }
 
-    if(listen(sock_fd, BACKLOG) == -1){
-        throw system_error(errno, generic_category(), "Listen! Line 109");
+    // Read port from config file
+    string line;
+    while (getline(conf, line)) {
+        if (line.find("SERVER_PORT=") == 0) {
+            port = line.substr(12);
+        }
+    }
+    conf.close();
+
+    if (port.empty()) {
+        cerr << "Invalid server.conf! Line 20" << endl;
+        return 1;
     }
 
-    // Setup for signal handler - Handle dead child processes
-    sa.sa_handler = sigchild_handler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
-    if(sigaction(SIGCHLD, &sa, NULL) == -1){
-        throw system_error(errno, generic_category(), "sigaction! Line 117");
+    // Create a socket for listening
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd == -1) {
+        perror("Socket creation failed! Line 72");
+        exit(EXIT_FAILURE);
+    }
+
+    // Allow reuse of the port
+    int opt = 1;
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt failed! Line 79");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Define the server address structure
+    struct sockaddr_in address;
+    address.sin_family = AF_INET; // IPv4
+    address.sin_addr.s_addr = INADDR_ANY; // Accept any IP (could be localhost or another IP)
+    address.sin_port = htons(stoi(port)); // Use the port from server.conf
+
+    // Binding the socket to the IP and port
+    if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
+        perror("Bind failed! Line 92");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    } else {
+        cout << "Server successfully bound to port !" << port << endl;
+    }
+
+    // Start listening for incoming connections
+    if (listen(server_fd, BACKLOG) < 0) {
+        perror("Listen failed");
+        close(server_fd);
+        exit(EXIT_FAILURE);
     }
 
     cout << "Server -> Waiting for connections..." << endl;
 
-    // Accept incoming connections
-    while(true){
-        sin_size = sizeof their_addr;
-        new_fd = accept(sock_fd, (struct sockaddr*)&their_addr, &sin_size);
-        if(new_fd == -1){
-            perror("Accept! Line 127");
-            continue; // AFter failure, go back to waiting for new connection
-        }
-        // Print client IP addr - inet_ntop (function to convert IP addr from binary to human readable)
-        inet_ntop(their_addr.ss_family, get_in_addr((struct sockaddr*)&their_addr), s, sizeof s);
-        cout << "server: got connection from " << s << endl;
-
-        if(!fork()){
-            // Child Process here.
-            close(sock_fd); // Our child doesn't need a listener.
-            // Handling client comm here
-            char buff[100];
-            int numbytes = recv(new_fd, buff, sizeof buff, 0);
-            if(numbytes == -1){
-                perror("recv! Line 140");
-            }else{
-                buff[numbytes] = '\0';
-                cout << "Server has received message -> " << buff << endl;
-                send(new_fd, buff, numbytes, 0); // send  message back to client
-            }
-            close(new_fd);
-            exit(0);
-        }
-        close(new_fd); // Parent does not need this.
+    // Reap dead processes
+    struct sigaction sa;
+    sa.sa_handler = sigchild_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+        perror("sigaction failed");
+        exit(EXIT_FAILURE);
     }
 
+    // Accept client connections
+    struct sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+    int client_socket;
+    
+    while (true) {
+        client_socket = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
+        if (client_socket < 0) {
+            perror("Accept failed");
+            continue;
+        }
+
+        cout << "Connection established with client!" << endl;
+
+        // Communication with client (Receive and send back a message)
+        char buffer[1024] = {0};
+        while (true) {
+            int valread = read(client_socket, buffer, 1024);
+            if (valread > 0) {
+                cout << "Message received from client: " << buffer << endl;
+
+
+                
+                // Handle IRC commands ! IMPLEMENT LATER
+                if (strncmp(buffer, "NICK", 4) == 0) {
+                    cout << "Nick command received: " << buffer + 5 << endl; 
+                    // Assign nickname or send error if invalid
+                } else if (strncmp(buffer, "JOIN", 4) == 0) {
+                    cout << "Join command received: " << buffer + 5 << endl; 
+                    // Add user to a channel
+                } else if (strncmp(buffer, "PRIVMSG", 7) == 0) {
+                    cout << "Private message: " << buffer + 8 << endl;
+                    // Send message to the channel or user
+                } else if (strncmp(buffer, "PART", 4) == 0) {
+                    cout << "Part command received: " << buffer + 5 << endl;
+                    // Remove user from the channel
+                } else if (strncmp(buffer, "exit", 4) == 0) {
+                    cout << "Client sent exit message. Closing connection." << endl;
+                    break;
+        }
+
+                // Check for "exit" message
+                // if (strncmp(buffer, "exit", 4) == 0) {
+                //     cout << "Client sent exit message. Closing connection." << endl;
+                //     break;
+                // }
+                
+
+                // Send our rev. message back to our client.
+                send(client_socket, buffer, strlen(buffer), 0);
+               // cout << "Message sent back to client!" << endl;
+                memset(buffer, 0, 1024); // Clear buffer after each message
+            } else if (valread == 0) {
+                cout << "Client disconnected." << endl;
+                break;
+            } else {
+                perror("Read error");
+                break;
+            }
+        }
+
+        close(client_socket); // Close the client socket after handling communication
+    }
+
+    close(server_fd); // Close the server socket
     return 0;
 }

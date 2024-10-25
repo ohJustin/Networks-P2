@@ -1,5 +1,6 @@
 # Networks-P2 Project!
 
+IRC (Relay-Chat) for users to communicate via channels/privmsg through a server.
 
 
 NICK <nickname>

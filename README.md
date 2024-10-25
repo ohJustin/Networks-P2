@@ -1,4 +1,6 @@
-# Networks-P2
+# Networks-P2 Project!
+
+
 
 NICK <nickname>
 USER <username> <hostname> <servername> <realname>

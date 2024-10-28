@@ -15,9 +15,20 @@
 #include <sstream>
 
 using namespace std;
+
+// Reply codes for (IRC) messages
+#define RPL_WELCOME "001"           // Welcome message
+#define RPL_YOURHOST "002"          // Your host information
+#define RPL_MYINFO "004"            // Server information
+#define ERR_NOSUCHNICK "401"        // No such nick/channel
+#define ERR_NICKNAMEINUSE "433"     // Nickname already in use
+#define ERR_NEEDMOREPARAMS "461"    // Not enough parameters
+#define ERR_NOTONCHANNEL "442"      // User is not on that channel
+#define RPL_LIST "322"              // Channel list
+#define RPL_LISTEND "323"           // End of channel list
+
 #define BACKLOG 10 // For pending connections
 #define DBFILE "users.db" // For storing users
-
 
 // https://www.geeksforgeeks.org/map-associative-containers-the-c-standard-template-library-stl/
 // Global variables for users

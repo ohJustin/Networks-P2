@@ -6,3 +6,6 @@ USER <username> <hostname> <servername> <realname>
 <hostname>: The hostname of the client.
 <servername>: The server being connected to.
 <realname>: The real name of the client.
+
+
+cd /mnt/d/Networks\ \&\ Data\ Comm\ -\ Course/Networks-P2

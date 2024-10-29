@@ -47,10 +47,12 @@ map<string, string> channel_topics; // Store channel topics
 
 
 // Unfinished
-void send_reply(int client_socket, const string& code, const string& message){
+void send_reply(int client_socket, const string& code, const string& message) {
     string reply = ":" + code + " " + message + "\r\n";
     send(client_socket, reply.c_str(), reply.size(), 0);
+    cout << "Server Response [" << code << "]: " << message << endl; // Print server response for debugging
 }
+
 
 // Load users from .db file into memory
 void load_users(){
@@ -265,15 +267,19 @@ void handle_names_command(const string& command, int client_socket, const string
 }
 
 void handle_client_command(const string& command, int client_socket) {
-    // Check if the client is already registered by verifying if it's in user_sockets
+    stringstream ss(command);
+    string commandType;
+    ss >> commandType;
+
+    // Make the command uppercase for case-insensitive comparison
+    transform(commandType.begin(), commandType.end(), commandType.begin(), ::toupper);
+
     bool is_registered = user_sockets.find(client_socket) != user_sockets.end();
 
-    if (command.find("USER") == 0 && !is_registered) {
-        // Allow USER command for unregistered clients to register
+    if (commandType == "USER" && !is_registered) {
         handle_user_command(command, client_socket);
         return;
-    } else if (command.find("NICK") == 0) {
-        // Allow NICK command for both unregistered and registered clients
+    } else if (commandType == "NICK") {
         handle_nick_command(command, client_socket);
         return;
     }
@@ -287,25 +293,26 @@ void handle_client_command(const string& command, int client_socket) {
 
     const string& username = user_sockets[client_socket]; // Retrieve the username
 
-    // Process other commands for registered clients
-    if (command.find("MODE") == 0) {
+    // Process other commands for registered clients using the uppercase commandType
+    if (commandType == "MODE") {
         handle_mode_command(command, client_socket, username);
-    } else if (command.find("JOIN") == 0) {
+    } else if (commandType == "JOIN") {
         handle_join_command(command, client_socket, username);
-    } else if (command.find("PART") == 0) {
+    } else if (commandType == "PART") {
         handle_part_command(command, client_socket, username);
-    } else if (command.find("PRIVMSG") == 0) {
+    } else if (commandType == "PRIVMSG") {
         handle_privmsg_command(command, client_socket, username);
-    } else if (command.find("TOPIC") == 0) {
+    } else if (commandType == "TOPIC") {
         handle_topic_command(command, client_socket, username);
-    } else if (command.find("NAMES") == 0) {
+    } else if (commandType == "NAMES") {
         handle_names_command(command, client_socket, username);
-    } else if (command.find("QUIT") == 0) {
+    } else if (commandType == "QUIT") {
         handle_quit_command(client_socket, username);
     } else {
         send_reply(client_socket, "421", "Unknown command");
     }
 }
+
 
 
 

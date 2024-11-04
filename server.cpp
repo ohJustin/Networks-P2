@@ -237,6 +237,26 @@ void handle_privmsg_command(const string& command, int client_socket, const stri
         message.erase(0, 1);
     }
 
+    // Check if recipient is a channel
+    if (channels.find(recipient) != channels.end()) {
+        // Broadcast the message to all users in the channel
+        for (const string& user : channels[recipient]) {
+            int recipient_socket = -1;
+            for (const auto& entry : user_sockets) {
+                if (entry.second == user) {
+                    recipient_socket = entry.first;
+                    break;
+                }
+            }
+
+            if (recipient_socket != -1 && recipient_socket != client_socket) {
+                send_reply(recipient_socket, "PRIVMSG", username + " says to " + recipient + ": " + message);
+            }
+        }
+        return;
+    }
+
+
     // Check if the recipient exists
     bool recipient_found = false;
     int recipient_socket;

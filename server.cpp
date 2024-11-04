@@ -49,7 +49,7 @@ map<string, string> channel_topics; // Store channel topics
 
 
 void send_reply(int client_socket, const string& code, const string& message) {
-    string reply = "Server Response [" + code + "]: " + message + "\\n";
+    string reply = "Server Response [" + code + "]: " + message + "\n";
     send(client_socket, reply.c_str(), reply.size(), 0);
 }
 
@@ -239,6 +239,17 @@ void handle_privmsg_command(const string& command, int client_socket, const stri
 
     // Check if recipient is a channel
     if (channels.find(recipient) != channels.end()) {
+        // Check if the sender is a member of the channel
+        auto& channel_users = channels[recipient];
+        if (find(channel_users.begin(), channel_users.end(), username) == channel_users.end()) {
+             // Sender is not a member of the channel
+             send_reply(client_socket, "404", recipient + " :Cannot send to channel");  // ERR_CANNOTSENDTOCHAN
+             return;
+        }
+
+
+
+
         // Broadcast the message to all users in the channel
         for (const string& user : channels[recipient]) {
             int recipient_socket = -1;

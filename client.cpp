@@ -1,5 +1,5 @@
 #include <iostream>
-#include <arpa/inet.h> // Similar to server .. networking functions (AF_INET, SOCK_STREAM, inet_pton)
+#include <arpa/inet.h> // Networking functions (AF_INET, SOCK_STREAM, inet_pton)
 #include <unistd.h> // close() -> close socket
 #include <cstring> // String functions (strlen)...
 #include <fstream>
@@ -7,42 +7,29 @@
 #include <sys/socket.h>
 #include <netdb.h>
 
-
 #define MAX_DATASIZE 100 // Buffer size limit
 
-//          Beej's Code Notes
-// socket(): Creates a socket for communication.
-// bind(): Binds the socket to an IP and port.
-// listen(): Puts the server socket in a passive state to listen for client connections.
-// accept(): Accepts a connection from a client.
-// connect(): Initiates a connection from the client to the server.
-// read() and send(): Used to read data from the socket and send data over the socket.
-// close(): Closes the socket connection.
-
-
 // Extract IP from sockaddr structure, no matter the family(IPv4 etc)
-void* get_in_addr(struct sockaddr* sa){
-    if(sa->sa_family == AF_INET){
-        return &(((struct sockaddr_in*)sa)->sin_addr); //ipv4
+void* get_in_addr(struct sockaddr* sa) {
+    if(sa->sa_family == AF_INET) {
+        return &(((struct sockaddr_in*)sa)->sin_addr); // IPv4
     }
-    return &(((struct sockaddr_in6*)sa)->sin6_addr);
+    return &(((struct sockaddr_in6*)sa)->sin6_addr); // IPv6
 }
 
 using namespace std;
 
-int main(int argc, char* argv[]){
-
-    // Did user provide correct amount of arguments?
-    if(argc != 2){
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
         cerr << "Usage: Client <config_file>" << endl;
         return 1;
     }
 
     string serverIP, serverPort;
     cout << "Opening .conf file for client" << endl;
-    ifstream conf(argv[1]); // Should be the position of client.conf file name in command line
-    if(!conf.is_open()){ // Make sure file is opened
-        cerr << "Issue opening client.conf! Line 43" << endl;
+    ifstream conf(argv[1]);
+    if (!conf.is_open()) {
+        cerr << "Issue opening client.conf!" << endl;
         return 1;
     }
 
@@ -55,99 +42,99 @@ int main(int argc, char* argv[]){
             serverPort = line.substr(12);
         }
     }
-
     conf.close();
 
-    // Make sure IP and Port are not empty
-    if(serverIP.empty() || serverPort.empty()){
-        cerr << "Invalid client.conf! Line 60" << endl;
+    if (serverIP.empty() || serverPort.empty()) {
+        cerr << "Invalid client.conf!" << endl;
         return 1;
     }
 
-    // Setup hints(struct addrinfo -> provides hints to getaddrinfo() resolving addresses. Helps know if IPv4... TCP or UDP) for addr resolution
     struct addrinfo hints, *servinfo, *p;
     memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC; 
-    hints.ai_socktype = SOCK_STREAM; 
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
 
-    // Retrieve addr info for server.
     cout << "Parsed Server IP: " << serverIP << " Port: " << serverPort << endl;
-    int rv = getaddrinfo(serverIP.c_str(),  serverPort.c_str(), &hints, &servinfo);
-    if(rv != 0){
+    int rv = getaddrinfo(serverIP.c_str(), serverPort.c_str(), &hints, &servinfo);
+    if (rv != 0) {
         cerr << "getaddrinfo -> " << gai_strerror(rv) << endl;
         return 1;
     }
 
     int sockfd;
-    // Loop thru results then make connection. Creating socket and connecting to server
-    for(p = servinfo; p != NULL; p = p->ai_next){
-        if((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
-            perror("Client issue: socket! Line 82");
+    for (p = servinfo; p != NULL; p = p->ai_next) {
+        if ((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
+            perror("Client issue: socket");
             continue;
         }
 
-        if(connect(sockfd, p->ai_addr, p->ai_addrlen) == -1){
+        if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
             close(sockfd);
-            perror("Client issue: connection! Line 88");
+            perror("Client issue: connection");
             continue;
         }
 
         break;
     }
 
-    if(p == NULL){
-        cerr << "Issue connecting client! Line 96" << endl;
+    if (p == NULL) {
+        cerr << "Issue connecting client!" << endl;
         return 2;
     }
 
-    //Convert ip to readable data and print
     char s[INET6_ADDRSTRLEN];
     inet_ntop(p->ai_family, get_in_addr((struct sockaddr*)p->ai_addr), s, sizeof s);
     cout << "Client -> connecting to: " << s << endl;
 
-    freeaddrinfo(servinfo); // Free info. Done with addr info.
+    
+    freeaddrinfo(servinfo);
 
-    // Interactive loop for the application communication
+    fd_set master_fds, read_fds;
+    FD_ZERO(&master_fds);
+    FD_ZERO(&read_fds);
+    FD_SET(sockfd, &master_fds);
+    FD_SET(STDIN_FILENO, &master_fds); // Add standard input (user input)
+
+    int fdmax = sockfd;
     char buff[MAX_DATASIZE];
     string msg;
-    while(true){
-        cout << "> ";
-        getline(cin,msg);
-        if(msg == "exit"){
-            break;
-        }
-        if(send(sockfd, msg.c_str(), msg.size(), 0) == -1){
-            perror("Send! Line 117");
-            break;
-        }
 
+    while (true) {
+        read_fds = master_fds;
 
-        //                      Notes
-        // ssize_t recv(int sockfd, void *buf, size_t len, int flags);
-        // sockfd (socket file descriptor.. identifies socket data should be received at)
-        // buf -> pointer to buffer for data to be stored
-        // len -> max num of bytes to be received. make the size of buffer so no extra data beyond buff's memory is printed
-        // flags -> flags for recv function, set to 0 by default
-
-        //Receive response from server ...
-        int numbytes = recv(sockfd, buff, MAX_DATASIZE -1, 0);
-        if(numbytes == -1){
-            perror("recv issue! Line 123");
-            break;
-        }else if (numbytes == 0){
-            cout << "Server closed the connection! Line 126" << endl;
+        if (select(fdmax + 1, &read_fds, NULL, NULL, NULL) == -1) {
+            perror("select failed");
             break;
         }
 
-        buff[numbytes] = '\0'; // '\0' represents end of communication for now...
-        cout << "Server: " << buff << endl; // Relay to user what server received from recv line 133.
+        if (FD_ISSET(STDIN_FILENO, &read_fds)) {
+            cout << "> ";
+            cout.flush();
+            getline(cin, msg);
+            if (msg == "exit") {
+                break;
+            }
+            if (send(sockfd, msg.c_str(), msg.size(), 0) == -1) {
+                perror("Send failed");
+                break;
+            }
+        }
+
+        if (FD_ISSET(sockfd, &read_fds)) {
+            int numbytes = recv(sockfd, buff, MAX_DATASIZE - 1, 0);
+            if (numbytes == -1) {
+                perror("recv issue");
+                break;
+            } else if (numbytes == 0) {
+                cout << "Server closed the connection!" << endl;
+                break;
+            }
+
+            buff[numbytes] = '\0';
+            cout << "\nServer: " << buff << endl << "> " << flush; // Prompt updated for immediate display
+        }
     }
 
     close(sockfd);
-    return 0;
-
-
-
-
     return 0;
 }

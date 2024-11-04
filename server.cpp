@@ -3,6 +3,7 @@
 #include <cstring>
 #include <string>
 #include <map>
+#include <set>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -38,6 +39,7 @@ using namespace std;
 map<int, string> user_sockets;   // Map from client socket to username
 map<string, string> userdb; // Map for storing username and realname
 map<string, vector<string>> channels; // Map for channels with users per channel
+map<int, bool> nickname_set_map;
 
 // Mode flags for users
 map<string, string> user_modes; // -> "a" (away), "i" (invisible), "w" (wallops)
@@ -46,11 +48,9 @@ map<string, string> channel_modes; // -> "a" (anonymous), "s" (secret), "p" (pri
 map<string, string> channel_topics; // Store channel topics
 
 
-// Unfinished
 void send_reply(int client_socket, const string& code, const string& message) {
-    string reply = ":" + code + " " + message + "\r\n";
+    string reply = "Server Response [" + code + "]: " + message + "\\n";
     send(client_socket, reply.c_str(), reply.size(), 0);
-    cout << "Server Response [" << code << "]: " << message << endl; // Print server response for debugging
 }
 
 
@@ -89,26 +89,37 @@ void handle_nick_command(const string& command, int client_socket) {
     stringstream ss(command);
     string nickName, token;
 
-    ss >> token; // NICK token
-    ss >> nickName; // Extract the nickname from the command
+    ss >> token; // "NICK"
+    ss >> nickName; // Extract nickname
 
-    if (user_sockets.find(client_socket) == user_sockets.end()) {
-        cout << "Unregistered client tried to set nickname. Use 'USER' command first!" << endl;
-        send_reply(client_socket, "451", "You have not registered");  // ERR_NOTREGISTERED
+    // Check if nickname is provided
+    if (nickName.empty()) {
+        send_reply(client_socket, ERR_NEEDMOREPARAMS, "NICK :Not enough parameters");
         return;
     }
 
+    // Allow NICK to be set even if the client is not registered
+    if (user_sockets.find(client_socket) == user_sockets.end()) {
+        cout << "Unregistered client set their nickname to -> " << nickName << endl;
+        user_sockets[client_socket] = nickName; // Temporarily set nickname for unregistered user
+        nickname_set_map[client_socket] = true;
+        send_reply(client_socket, RPL_MYINFO, "004 Nickname set to " + nickName);
+        return;
+    }
+
+    // If the client is already registered, update the nickname
     string userName = user_sockets[client_socket];
     string realName = userdb[userName].substr(userdb[userName].find(':') + 1);
 
-    // Update nickname in the user database and save to .db
+    // Update nickname in the user database
     userdb[userName] = nickName + ":" + realName;
-    save_users();
+    save_users(); // Save changes to the database
 
-    // Send confirmation to client
-    send_reply(client_socket, RPL_MYINFO, "Nickname set to " + nickName);
-    cout << "Client set their nickname to -> " << nickName << endl;
+    cout << "Client updated their nickname to -> " << nickName << endl;
+    nickname_set_map[client_socket] = true;
+    send_reply(client_socket, RPL_MYINFO, "004 Nickname updated to " + nickName);
 }
+
 
 // helper USER function for 'USER'... 
 void handle_user_command(const string& command, int clientSocket) {
@@ -171,7 +182,7 @@ void handle_mode_command(const string& command, int client_socket, const string&
 // HANDLE QUIT COMMAND
 void handle_quit_command(int client_socket, const string& username){
     // Inform users of disconnection
-    send_reply(client_socket, RPL_MYINFO, "GOodbye " + username);
+    send_reply(client_socket, RPL_MYINFO, "Goodbye " + username);
     close(client_socket);
 }
 
@@ -189,6 +200,7 @@ void handle_join_command(const string& command, int client_socket, const string&
     // Add user to channel
     channels[channel].push_back(username);
     send_reply(client_socket, RPL_LIST, channel + " :Users in channel"); // Sample Success
+    send_reply(client_socket, "323", channel + " :End of ./JOIN list!");
 }
 
 
@@ -214,14 +226,35 @@ void handle_privmsg_command(const string& command, int client_socket, const stri
     string token, recipient, message;
     ss >> token >> recipient;
     getline(ss, message);
-    
+
     if (message.empty() || recipient.empty()) {
         send_reply(client_socket, ERR_NEEDMOREPARAMS, "PRIVMSG :Not enough parameters");
         return;
     }
 
-    // Forward the private message to the recipient if they exist
-    send_reply(client_socket, RPL_MYINFO, recipient + " :" + username + " says " + message);
+    // Trim leading space from the message if necessary
+    if (!message.empty() && message[0] == ':') {
+        message.erase(0, 1);
+    }
+
+    // Check if the recipient exists
+    bool recipient_found = false;
+    int recipient_socket;
+    for (const auto& entry : user_sockets) {
+        if (entry.second == recipient) {
+            recipient_found = true;
+            recipient_socket = entry.first;
+            break;
+        }
+    }
+
+    if (recipient_found) {
+        // Relay the message to the recipient
+        send_reply(recipient_socket, "PRIVMSG", username + " says: " + message);
+    } else {
+        // Send error back to sender if recipient not found
+        send_reply(client_socket, ERR_NOSUCHNICK, recipient + " :No such user");
+    }
 }
 
 void handle_topic_command(const string& command, int client_socket, const string& username){
@@ -240,10 +273,10 @@ void handle_topic_command(const string& command, int client_socket, const string
     }
 
     if (topic.empty()) {
-        send_reply(client_socket, RPL_LIST, channel + " :" + channel_topics[channel]);
+        send_reply(client_socket, "RPL_LIST", channel + " :" + channel_topics[channel]);
     } else {
         channel_topics[channel] = topic;
-        send_reply(client_socket, RPL_LIST, channel + " :Topic set to " + topic);
+        send_reply(client_socket, "322", channel + " :Topic set to " + topic);
     }
 }
 
@@ -267,24 +300,25 @@ void handle_names_command(const string& command, int client_socket, const string
 }
 
 void handle_client_command(const string& command, int client_socket) {
-    stringstream ss(command);
-    string commandType;
-    ss >> commandType;
-
-    // Make the command uppercase for case-insensitive comparison
-    transform(commandType.begin(), commandType.end(), commandType.begin(), ::toupper);
-
     bool is_registered = user_sockets.find(client_socket) != user_sockets.end();
 
-    if (commandType == "USER" && !is_registered) {
-        handle_user_command(command, client_socket);
-        return;
-    } else if (commandType == "NICK") {
+    // Allow NICK command for unregistered clients to initiate registration
+    if (command.find("NICK") == 0) {
         handle_nick_command(command, client_socket);
         return;
     }
 
-    // Check if the client is registered for other commands
+    // Ensure USER command can be processed if a client is not registered
+    // Allow `USER` command for unregistered clients after `NICK`
+    if (command.find("USER") == 0) {
+        if (nickname_set_map[client_socket]) {  // Check if the NICK was set
+            handle_user_command(command, client_socket);
+        } else {
+            send_reply(client_socket, "451", "You have not registered");  // ERR_NOTREGISTERED
+        }
+        return;
+    }
+
     if (!is_registered) {
         cout << "Unregistered client tried to issue a command. Ignoring." << endl;
         send_reply(client_socket, "451", "You have not registered");  // ERR_NOTREGISTERED
@@ -293,25 +327,26 @@ void handle_client_command(const string& command, int client_socket) {
 
     const string& username = user_sockets[client_socket]; // Retrieve the username
 
-    // Process other commands for registered clients using the uppercase commandType
-    if (commandType == "MODE") {
+    // Process other commands for registered clients
+    if (command.find("MODE") == 0) {
         handle_mode_command(command, client_socket, username);
-    } else if (commandType == "JOIN") {
+    } else if (command.find("JOIN") == 0) {
         handle_join_command(command, client_socket, username);
-    } else if (commandType == "PART") {
+    } else if (command.find("PART") == 0) {
         handle_part_command(command, client_socket, username);
-    } else if (commandType == "PRIVMSG") {
+    } else if (command.find("PRIVMSG") == 0) {
         handle_privmsg_command(command, client_socket, username);
-    } else if (commandType == "TOPIC") {
+    } else if (command.find("TOPIC") == 0) {
         handle_topic_command(command, client_socket, username);
-    } else if (commandType == "NAMES") {
+    } else if (command.find("NAMES") == 0) {
         handle_names_command(command, client_socket, username);
-    } else if (commandType == "QUIT") {
+    } else if (command.find("QUIT") == 0) {
         handle_quit_command(client_socket, username);
     } else {
         send_reply(client_socket, "421", "Unknown command");
     }
 }
+
 
 
 
@@ -335,14 +370,14 @@ int main(int argc, char* argv[]) {
 
     string port;
     cout << "Opening .conf file for server" << endl;
-    ifstream conf(argv[1]); // Command line input for .conf file
-    if (!conf.is_open()) { // Check if conf file opened.
-        cerr << "Issue opening server.conf! Line 12" << endl;
+    ifstream conf(argv[1]);
+    if (!conf.is_open()) {
+        cerr << "Issue opening server.conf!" << endl;
         return 1;
     }
 
-    // Read port from config file
     string line;
+
     while (getline(conf, line)) {
         if (line.find("SERVER_PORT=") == 0) {
             port = line.substr(12);
@@ -351,41 +386,34 @@ int main(int argc, char* argv[]) {
     conf.close();
 
     if (port.empty()) {
-        cerr << "Invalid server.conf! Line 20" << endl;
+        cerr << "Invalid server.conf!" << endl;
         return 1;
     }
 
-    // Create a socket for listening
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd == -1) {
-        perror("Socket creation failed! Line 72");
+        perror("Socket creation failed!");
         exit(EXIT_FAILURE);
     }
 
-    // Allow reuse of the port
     int opt = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        perror("setsockopt failed! Line 79");
+        perror("setsockopt failed!");
         close(server_fd);
         exit(EXIT_FAILURE);
     }
 
-    // Define the server address structure
     struct sockaddr_in address;
-    address.sin_family = AF_INET; // IPv4
-    address.sin_addr.s_addr = INADDR_ANY; // Accept any IP (could be localhost or another IP)
-    address.sin_port = htons(stoi(port)); // Use the port from server.conf
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(stoi(port));
 
-    // Binding the socket to the IP and port
     if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
-        perror("Bind failed! Line 92");
+        perror("Bind failed!");
         close(server_fd);
         exit(EXIT_FAILURE);
-    } else {
-        cout << "Server successfully bound to port !" << port << endl;
     }
 
-    // Start listening for incoming connections
     if (listen(server_fd, BACKLOG) < 0) {
         perror("Listen failed");
         close(server_fd);
@@ -394,7 +422,6 @@ int main(int argc, char* argv[]) {
 
     cout << "Server -> Waiting for connections..." << endl;
 
-    // Reap dead processes
     struct sigaction sa;
     sa.sa_handler = sigchild_handler;
     sigemptyset(&sa.sa_mask);
@@ -404,49 +431,49 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Accept client connections
-    struct sockaddr_in client_addr;
-    socklen_t addr_len = sizeof(client_addr);
-    int client_socket;
-    
-    while (true) {
-        client_socket = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
-        if (client_socket < 0) {
-            perror("Accept failed");
-            continue;
-        }
+    fd_set master_fds, read_fds;
+int fdmax = server_fd;
+FD_ZERO(&master_fds);
+FD_ZERO(&read_fds);
+FD_SET(server_fd, &master_fds);
+set<int> active_clients; // Tracking active client sockets
 
-        cout << "Connection established with client!" << endl;
+struct sockaddr_in client_addr;
+socklen_t addr_len = sizeof(client_addr);
 
-    // Communication with client (Receive and send back a message)
-    char buffer[1024] = {0};
-    while (true) {
-        int valread = read(client_socket, buffer, 1024);
-        if (valread > 0) {
-            cout << "Message received from client: " << buffer << endl;
+while (true) {
+    read_fds = master_fds;
+    if (select(fdmax + 1, &read_fds, NULL, NULL, NULL) == -1) {
+        perror("Select failed");
+        exit(EXIT_FAILURE);
+    }
 
-            // Handle IRC commands based on registration status
-            handle_client_command(buffer, client_socket);
-
-            // Check for "exit" message
-            if (strncmp(buffer, "exit", 4) == 0) {
-                cout << "Client sent exit message. Closing connection." << endl;
-                break;
+    for (int i = 0; i <= fdmax; i++) {
+        if (FD_ISSET(i, &read_fds)) {
+            if (i == server_fd) {
+                // Accept new client connections
+                int client_socket = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
+                FD_SET(client_socket, &master_fds);
+                if (client_socket > fdmax) fdmax = client_socket;
+                active_clients.insert(client_socket);
+            } else {
+                // Handle client communication
+                char buffer[1024] = {0};
+                int valread = read(i, buffer, 1024);
+                if (valread <= 0) {
+                    close(i);
+                    FD_CLR(i, &master_fds);
+                    active_clients.erase(i);
+                } else {
+                    buffer[valread] = '\0';
+                    handle_client_command(buffer, i);
+                }
             }
-
-            memset(buffer, 0, 1024); // Clear buffer after each message
-        } else if (valread == 0) {
-            cout << "Client disconnected." << endl;
-            break;
-        } else {
-            perror("Read error");
-            break;
         }
     }
+}
 
-        close(client_socket); // Close the client socket after handling communication
-    }
 
-    close(server_fd); // Close the server socket
+    close(server_fd);
     return 0;
 }

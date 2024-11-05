@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <map>
 #include <set>
@@ -46,7 +47,13 @@ map<string, string> user_modes; // -> "a" (away), "i" (invisible), "w" (wallops)
 // Mode flags for channels
 map<string, string> channel_modes; // -> "a" (anonymous), "s" (secret), "p" (private)
 map<string, string> channel_topics; // Store channel topics
+// Global timer for heartbeat intervals
+int heartbeat_int = 0; //Initialization
+time_t last_heart_time = time(nullptr);
 
+
+fd_set master_fds; // For QUIT commands.
+set<int> active_clients; 
 
 void send_reply(int client_socket, const string& code, const string& message) {
     string reply = "Server Response [" + code + "]: " + message + "\n";
@@ -180,10 +187,21 @@ void handle_mode_command(const string& command, int client_socket, const string&
 }
 
 // HANDLE QUIT COMMAND
-void handle_quit_command(int client_socket, const string& username){
-    // Inform users of disconnection
+void handle_quit_command(int client_socket, const string& username) {
+    // Send a goodbye message and close the socket
     send_reply(client_socket, RPL_MYINFO, "Goodbye " + username);
     close(client_socket);
+
+    // Remove the client socket from the master file descriptor set
+    if (FD_ISSET(client_socket, &master_fds)) {
+        FD_CLR(client_socket, &master_fds);
+    }
+
+    // Remove from the active clients set
+    active_clients.erase(client_socket);
+
+    // Log the disconnection
+    cout << "Client '" << username << "' has disconnected." << endl;
 }
 
 // HANDLE JOIN COMMAND
@@ -311,6 +329,14 @@ void handle_topic_command(const string& command, int client_socket, const string
     }
 }
 
+void send_heartbeat_to_clients(const set<int>& active_clients) {
+    for (int client_socket : active_clients) {
+        string heartbeat_msg = "..HEARTBEAT..\n";
+        send(client_socket, heartbeat_msg.c_str(), heartbeat_msg.size(), 0);
+    }
+    cout << "Heartbeat sent to all clients!!!" << endl;
+}
+
 void handle_names_command(const string& command, int client_socket, const string& username) {
     stringstream ss(command);
     string token, channel;
@@ -379,6 +405,16 @@ void handle_client_command(const string& command, int client_socket) {
 }
 
 
+// Function to trim leading and trailing whitespace from a string
+string trim(const string& str) {
+    size_t first = str.find_first_not_of(" \t");
+    if (first == string::npos) {
+        return ""; // String is all whitespace
+    }
+    size_t last = str.find_last_not_of(" \t");
+    return str.substr(first, (last - first + 1));
+}
+
 
 
 
@@ -410,11 +446,29 @@ int main(int argc, char* argv[]) {
     string line;
 
     while (getline(conf, line)) {
-        if (line.find("SERVER_PORT=") == 0) {
-            port = line.substr(12);
+    if (line.find("SERVER_PORT=") == 0) {
+        port = trim(line.substr(12)); // 12 is correct for "SERVER_PORT="
+        cout << "Parsed SERVER_PORT: '" << port << "'" << endl; // Debug print
+    } else if (line.find("HEARTBEAT_INTERVAL=") == 0) {
+        string interval_str = trim(line.substr(19)); // Use 19 to skip "HEARTBEAT_INTERVAL="
+        cout << "Parsed HEARTBEAT_INTERVAL: '" << interval_str << "'" << endl; // Debug print
+        try {
+            heartbeat_int = stoi(interval_str);
+        } catch (const std::invalid_argument& e) {
+            cerr << "Invalid HEARTBEAT_INTERVAL value in server.conf: " << interval_str << endl;
+            return 1;
+        } catch (const std::out_of_range& e) {
+            cerr << "HEARTBEAT_INTERVAL value out of range in server.conf: " << interval_str << endl;
+            return 1;
         }
     }
+}
     conf.close();
+
+    if(heartbeat_int <= 0){
+        cerr << "Invalid/Missing HEARTBEAT_INTERVAL -> server.conf" << endl;
+        return 1;
+    }
 
     if (port.empty()) {
         cerr << "Invalid server.conf!" << endl;
@@ -472,6 +526,8 @@ set<int> active_clients; // Tracking active client sockets
 struct sockaddr_in client_addr;
 socklen_t addr_len = sizeof(client_addr);
 
+
+
 while (true) {
     read_fds = master_fds;
     if (select(fdmax + 1, &read_fds, NULL, NULL, NULL) == -1) {
@@ -479,29 +535,42 @@ while (true) {
         exit(EXIT_FAILURE);
     }
 
+    // Update current time and check if it's time to send a heartbeat
+    time_t current_time = time(nullptr);
+    if (difftime(current_time, last_heart_time) >= heartbeat_int) {
+        send_heartbeat_to_clients(active_clients);
+        last_heart_time = current_time;
+    }
+
     for (int i = 0; i <= fdmax; i++) {
-        if (FD_ISSET(i, &read_fds)) {
-            if (i == server_fd) {
-                // Accept new client connections
-                int client_socket = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
+    if (FD_ISSET(i, &read_fds)) {
+        if (i == server_fd) {
+            // Accept new client connections
+            int client_socket = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
+            if (client_socket != -1) {
                 FD_SET(client_socket, &master_fds);
                 if (client_socket > fdmax) fdmax = client_socket;
                 active_clients.insert(client_socket);
             } else {
-                // Handle client communication
-                char buffer[1024] = {0};
-                int valread = read(i, buffer, 1024);
-                if (valread <= 0) {
-                    close(i);
-                    FD_CLR(i, &master_fds);
-                    active_clients.erase(i);
-                } else {
-                    buffer[valread] = '\0';
-                    handle_client_command(buffer, i);
-                }
+                perror("Error accepting connection");
+            }
+        } else {
+            // Handle client communication
+            char buffer[1024] = {0};
+            int valread = read(i, buffer, 1024);
+            if (valread <= 0) {
+                // Handle client disconnection or read error
+                close(i);
+                FD_CLR(i, &master_fds);
+                active_clients.erase(i);
+                cout << "Client socket " << i << " disconnected." << endl;
+            } else {
+                buffer[valread] = '\0';
+                handle_client_command(buffer, i);
             }
         }
     }
+}
 }
 
 

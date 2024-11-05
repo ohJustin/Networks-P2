@@ -131,7 +131,15 @@ int main(int argc, char* argv[]) {
             }
 
             buff[numbytes] = '\0';
-            cout << "\nServer: " << buff << endl << "> " << flush; // Prompt updated for immediate display
+
+                        // Check for heartbeat message
+            if (strcmp(buff, "..HEARTBEAT..\n") == 0) {
+                cout << "\nReceived heartbeat from server" << endl << "> " << flush;
+            } else {
+                cout << "\nServer: " << buff << endl << "> " << flush; // Prompt updated for immediate display
+            }
+
+        // cout << "\nServer: " << buff << endl << "> " << flush; // Prompt updated for immediate display
         }
     }
 
